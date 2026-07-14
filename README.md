@@ -147,7 +147,7 @@ payload vectors against the spec's mock capture server.
 ## Community
 
 Questions → [GitHub Discussions](https://github.com/kildenhq/kilden-sdk-expo/discussions).
-Docs → [docs.kilden.io](https://docs.kilden.io).
+Docs → [kilden.io/docs](https://kilden.io/docs).
 
 ## License
 
