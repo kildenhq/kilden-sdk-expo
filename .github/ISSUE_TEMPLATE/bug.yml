@@ -1,0 +1,23 @@
+name: Bug report
+description: Something misbehaves, or diverges from kilden-sdk-spec
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: SDK version and platform
+      placeholder: "@kilden-io/expo 0.1.0-alpha.1, Expo SDK 53, iOS 18"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: If this is a divergence from the spec or another Kilden SDK, say which — those reports are gold.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      render: typescript

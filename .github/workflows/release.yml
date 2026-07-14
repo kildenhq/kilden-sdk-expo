@@ -1,0 +1,41 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: kildenhq/kilden-sdk-spec
+          path: spec
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: spec/mockserver/go.mod
+      - run: npm ci
+      - run: npm run check
+        env:
+          KILDEN_SPEC_DIR: ${{ github.workspace }}/spec
+      - name: publish (OIDC trusted publishing)
+        # No token: npmjs.com has this repo+workflow configured as the
+        # package's trusted publisher. Requires npm >= 11.5 for OIDC.
+        run: |
+          npm install -g npm@latest
+          TAG=latest
+          case "$GITHUB_REF_NAME" in *-alpha*|*-beta*|*-rc*) TAG=alpha ;; esac
+          npm publish --provenance --access public --tag "$TAG"
+      - name: github release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
