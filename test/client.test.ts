@@ -2,7 +2,7 @@ import { randomFillSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import { KildenClient } from "../src/client.js";
-import { K_ANON, K_DISTINCT, MemoryStorage } from "../src/storage.js";
+import { K_ANON, K_DISTINCT, K_QUEUE, MemoryStorage } from "../src/storage.js";
 import type {
   EventPayload,
   InitOptions,
@@ -218,6 +218,72 @@ describe("events", () => {
     await client.close();
     expect(batches).toHaveLength(0);
     expect(client.dropped).toBe(0);
+  });
+});
+
+describe("persistQueue", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+  it("events survive a simulated app kill and deliver on the next launch", async () => {
+    const storage = new MemoryStorage();
+    const first = newClient({ storage, persistQueue: true });
+    first.track("queued_1");
+    first.track("queued_2", { n: 2 });
+    await first.getDistinctId(); // hydrated
+    await tick(); // coalesced persist flushes to storage
+    // no close(): the OS killed the app
+
+    const { transport, batches } = makeTransport();
+    const second = newClient({ storage, persistQueue: true }, transport);
+    await second.flush();
+    const events = batches.flat();
+    expect(events.map((event) => event.event)).toEqual(["queued_1", "queued_2"]);
+    expect(events[1]?.properties["n"]).toBe(2);
+  });
+
+  it("restored events keep their original uuid (idempotent re-send)", async () => {
+    const storage = new MemoryStorage();
+    const first = newClient({ storage, persistQueue: true });
+    first.track("kept_uuid");
+    await first.getDistinctId();
+    await tick();
+    const persisted = JSON.parse((await storage.getItem(K_QUEUE)) as string) as Array<{
+      uuid: string;
+    }>;
+
+    const { transport, batches } = makeTransport();
+    const second = newClient({ storage, persistQueue: true }, transport);
+    await second.flush();
+    expect(batches.flat()[0]?.uuid).toBe(persisted[0]?.uuid);
+  });
+
+  it("delivered events are removed from disk", async () => {
+    const storage = new MemoryStorage();
+    const { transport } = makeTransport();
+    const client = newClient({ storage, persistQueue: true }, transport);
+    client.track("delivered");
+    await client.flush();
+    await tick();
+    expect(await storage.getItem(K_QUEUE)).toBe("[]");
+  });
+
+  it("an unreadable persisted queue is discarded without throwing", async () => {
+    const storage = new MemoryStorage();
+    await storage.setItem(K_QUEUE, "<<< not json");
+    const { transport, batches } = makeTransport();
+    const client = newClient({ storage, persistQueue: true }, transport);
+    client.track("fresh");
+    await client.flush();
+    expect(batches.flat().map((event) => event.event)).toEqual(["fresh"]);
+  });
+
+  it("is off by default: nothing is written under kilden_queue", async () => {
+    const storage = new MemoryStorage();
+    const client = newClient({ storage });
+    client.track("ephemeral");
+    await client.getDistinctId();
+    await tick();
+    expect(await storage.getItem(K_QUEUE)).toBeNull();
   });
 });
 

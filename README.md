@@ -103,9 +103,14 @@ when the app goes to background (`AppState` — the mobile stand-in for
 `Retry-After`; the queue is bounded (10,000 events — at the cap the **new**
 event is dropped, never history).
 
-The queue is not persisted in v1: events still queued when the OS kills the
-app are lost. Call `close()` if you have a natural shutdown point;
-`kilden.flush()` forces a flush any time.
+By default the queue lives in memory: events still queued when the OS kills
+the app are lost (React Native exposes no "app will terminate" signal — the
+background flush is the last reliable hook). Set `persistQueue: true` to
+write the queue through to storage instead: undelivered events are restored
+and sent on the next launch. Delivery is at-least-once — Kilden dedups by
+event uuid, so a batch that was in flight during a kill never double-counts.
+Call `close()` if you have a natural shutdown point; `kilden.flush()` forces
+a flush any time.
 
 ## Options
 
@@ -118,6 +123,7 @@ kilden.init("wk_your_public_key", {
   requestTimeoutMs: 10000,
   debug: false,             // verbose logging + $-prefix warnings
   enabled: true,            // false = full no-op (e.g. in development)
+  persistQueue: false,      // true = queue survives app kills (see above)
   identityToken: undefined, // initial JWT, see identity verification
   getIdentityToken: undefined,
   context: undefined,       // () => extra $ properties for every event

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-07-14
+
+### Added
+
+- `persistQueue` option: the event queue is written through to storage so
+  events survive the OS killing the app (React Native has no
+  "will terminate" signal). Restored and delivered on the next launch;
+  at-least-once, deduped server-side by event uuid. Off by default.
+
 ## [0.1.0-alpha.1] - 2026-07-14
 
 ### Added
@@ -24,5 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Payload vector runner against the kilden-sdk-spec mock capture server.
 - Constructor rejects secret (`sk_`) write keys.
 
-[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/kildenhq/kilden-sdk-expo/releases/tag/v0.1.0-alpha.1

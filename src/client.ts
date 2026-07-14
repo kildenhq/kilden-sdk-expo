@@ -10,7 +10,7 @@ import {
   defaultRandomFill,
   defaultStorage,
 } from "./rn-defaults.js";
-import { K_ANON, K_DISTINCT, MemoryStorage } from "./storage.js";
+import { K_ANON, K_DISTINCT, K_QUEUE, MemoryStorage } from "./storage.js";
 import { formatTimestamp, normalizeTimestamp } from "./timestamp.js";
 import { FetchTransport } from "./transport.js";
 import type {
@@ -55,6 +55,8 @@ export class KildenClient {
   private readonly debugMode: boolean;
   private readonly flushAt: number;
   private readonly maxQueueSize: number;
+  private readonly persistQueue: boolean;
+  private persistScheduled = false;
   private readonly storage: KeyValueStorage;
   private readonly random: RandomFill;
   private readonly contextFn: () => Properties;
@@ -92,6 +94,7 @@ export class KildenClient {
     this.log = this.enabled ? makeLogger(this.debugMode) : silentLogger;
     this.flushAt = options.flushAt ?? DEFAULT_FLUSH_AT;
     this.maxQueueSize = options.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
+    this.persistQueue = options.persistQueue === true;
 
     const apiHost = (options.apiHost ?? DEFAULT_API_HOST).replace(/\/$/, "");
     const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -289,6 +292,7 @@ export class KildenClient {
         while (this.queue.length > 0) {
           const batch = this.queue.splice(0);
           await this.batcher.send(batch);
+          this.schedulePersist();
         }
       } catch {
         // batcher never throws; belt and suspenders for contract 1
@@ -319,9 +323,20 @@ export class KildenClient {
       if (timer !== null) clearTimeout(timer);
       this.closed = true;
       if (result === "deadline" && this.queue.length > 0) {
-        this.selfDropped += this.queue.length;
-        this.log.warn(`close: deadline reached with ${this.queue.length} event(s) undrained`);
+        if (this.persistQueue) {
+          // Undrained but already on disk (write-through at enqueue): do NOT
+          // persist the emptied queue or we would wipe them; the next launch
+          // restores and delivers them.
+          this.log.warn(
+            `close: deadline reached with ${this.queue.length} event(s) left persisted`,
+          );
+        } else {
+          this.selfDropped += this.queue.length;
+          this.log.warn(`close: deadline reached with ${this.queue.length} event(s) undrained`);
+        }
         this.queue = [];
+      } else {
+        this.schedulePersist();
       }
     })();
     return this.closing;
@@ -336,10 +351,12 @@ export class KildenClient {
 
   private async hydrate(): Promise<void> {
     try {
-      const [anon, distinct] = await Promise.all([
+      const [anon, distinct, persisted] = await Promise.all([
         this.storage.getItem(K_ANON),
         this.storage.getItem(K_DISTINCT),
+        this.persistQueue ? this.storage.getItem(K_QUEUE) : Promise.resolve(null),
       ]);
+      if (persisted) this.restoreQueue(persisted);
       if (anon) {
         this.anonId = anon;
       } else {
@@ -355,6 +372,60 @@ export class KildenClient {
     this.hydrated = true;
     const ops = this.pending.splice(0);
     for (const op of ops) op();
+    if (this.queue.length >= this.flushAt) void this.flush();
+  }
+
+  /** Events persisted by a previous process (the OS killed the app mid-queue). */
+  private restoreQueue(persisted: string): void {
+    try {
+      const events = JSON.parse(persisted) as unknown;
+      if (!Array.isArray(events)) return;
+      for (const event of events as EventPayload[]) {
+        if (
+          event !== null &&
+          typeof event === "object" &&
+          typeof event.uuid === "string" &&
+          typeof event.event === "string" &&
+          typeof event.distinct_id === "string" &&
+          typeof event.timestamp === "string" &&
+          event.properties !== null &&
+          typeof event.properties === "object" &&
+          this.queue.length < this.maxQueueSize
+        ) {
+          this.queue.push(event);
+        }
+      }
+      if (this.queue.length > 0) {
+        this.log.debug(`restored ${this.queue.length} persisted event(s)`);
+      }
+    } catch {
+      this.log.warn("persisted queue was unreadable; discarding it");
+    }
+    this.schedulePersist();
+  }
+
+  /**
+   * Coalesced write-through of the queue (persistQueue: true). Runs after
+   * every enqueue and after every delivered batch, so on the next launch the
+   * disk holds exactly the undelivered events. A batch in flight when the OS
+   * kills the app is re-sent on restore — at-least-once, deduped by uuid.
+   */
+  private schedulePersist(): void {
+    if (!this.persistQueue || this.persistScheduled) return;
+    this.persistScheduled = true;
+    const timer = setTimeout(() => {
+      this.persistScheduled = false;
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(this.queue);
+      } catch {
+        return;
+      }
+      void this.storage.setItem(K_QUEUE, serialized).catch(() => {
+        this.log.debug("storage write failed for the persisted queue");
+      });
+    }, 0);
+    (timer as unknown as { unref?: () => void }).unref?.();
   }
 
   /** Internal capture used by the flag exposure pipeline. */
@@ -398,6 +469,7 @@ export class KildenClient {
       properties: { ...context, ...systemProperties, ...userProperties },
       timestamp: stamped.timestamp,
     });
+    this.schedulePersist();
     if (this.queue.length >= this.flushAt) void this.flush();
   }
 

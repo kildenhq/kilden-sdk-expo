@@ -86,6 +86,13 @@ export interface InitOptions {
   debug?: boolean;
   /** false turns the whole client into a no-op. */
   enabled?: boolean;
+  /**
+   * Persist the event queue to storage so events survive the OS killing the
+   * app (there is no "will terminate" signal in React Native). Restored on
+   * the next launch; delivery stays at-least-once — the server dedups by
+   * event uuid. Default false.
+   */
+  persistQueue?: boolean;
   /** Initial identity token (JWT minted by your backend). */
   identityToken?: string;
   /** Called to (re)fetch the identity token: 60s before expiry and on 401. */
