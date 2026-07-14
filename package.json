@@ -1,6 +1,6 @@
 {
   "name": "@kilden-io/expo",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Kilden Expo / React Native SDK — client-side events, identity and feature flags.",
   "keywords": [
     "kilden",
@@ -54,16 +54,20 @@
     "check": "npm run typecheck && npm run test",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "@react-native-async-storage/async-storage": "^1.21.0 || ^2.0.0",
-    "expo-crypto": "^13.0.0 || ^14.0.0"
-  },
   "peerDependencies": {
+    "@react-native-async-storage/async-storage": ">=1.21.0",
     "expo": ">=50.0.0",
+    "expo-crypto": ">=13.0.0",
     "react-native": ">=0.73.0"
   },
   "peerDependenciesMeta": {
+    "@react-native-async-storage/async-storage": {
+      "optional": true
+    },
     "expo": {
+      "optional": true
+    },
+    "expo-crypto": {
       "optional": true
     }
   },
