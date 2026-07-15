@@ -287,6 +287,33 @@ describe("persistQueue", () => {
   });
 });
 
+describe("flush", () => {
+  it("keeps delivering after a flush that found the queue empty (regression)", async () => {
+    // Bug seen live in dogfooding: the 5s interval fires with an empty queue,
+    // the drain completes synchronously, and the stale resolved promise gets
+    // stuck in `inflight` — every later flush (interval AND AppState) no-ops
+    // and nothing is delivered until the app restarts.
+    const { transport, batches } = makeTransport();
+    const client = newClient({}, transport);
+    await client.flush(); // empty-queue flush, completes synchronously
+    client.track("after_empty_flush");
+    await client.flush();
+    expect(batches.flat().map((event) => event.event)).toEqual(["after_empty_flush"]);
+  });
+
+  it("the periodic timer keeps delivering across empty intervals", async () => {
+    const { transport, batches } = makeTransport();
+    const client = newClient({ flushIntervalMs: 30 }, transport);
+    await client.getDistinctId();
+    client.track("first");
+    await new Promise((resolve) => setTimeout(resolve, 100)); // ≥1 empty tick after delivery
+    client.track("second");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(batches.flat().map((event) => event.event)).toEqual(["first", "second"]);
+    await client.close();
+  });
+});
+
 describe("lifecycle", () => {
   it("close is idempotent and drops later events with a count", async () => {
     const { transport, batches } = makeTransport();

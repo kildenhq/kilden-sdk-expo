@@ -287,20 +287,26 @@ export class KildenClient {
   async flush(): Promise<void> {
     if (!this.enabled) return;
     await this.hydration;
-    this.inflight ??= (async () => {
-      try {
-        while (this.queue.length > 0) {
-          const batch = this.queue.splice(0);
-          await this.batcher.send(batch);
-          this.schedulePersist();
-        }
-      } catch {
+    // The null reset lives in .finally() — a microtask that always runs AFTER
+    // this assignment. Resetting inside the drain itself breaks when the queue
+    // is empty: the drain completes synchronously, its reset runs before ??=
+    // assigns, and the stale resolved promise blocks every future flush.
+    this.inflight ??= this.drain()
+      .catch(() => {
         // batcher never throws; belt and suspenders for contract 1
-      } finally {
+      })
+      .finally(() => {
         this.inflight = null;
-      }
-    })();
+      });
     return this.inflight;
+  }
+
+  private async drain(): Promise<void> {
+    while (this.queue.length > 0) {
+      const batch = this.queue.splice(0);
+      await this.batcher.send(batch);
+      this.schedulePersist();
+    }
   }
 
   /**

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2026-07-15
+
+### Fixed
+
+- Delivery stopped permanently after any flush that found the queue empty
+  (e.g. one idle 5s interval tick): the drain completed synchronously, its
+  `inflight = null` reset ran *before* the `??=` assignment, and the stale
+  resolved promise then blocked every future flush — interval and AppState
+  alike. Events kept queuing (and, with `persistQueue`, delivering on the
+  next launch) but nothing shipped live until restart. Found dogfooding on a
+  real device session; the null reset now runs in a `.finally()` microtask,
+  which always executes after the assignment.
+
 ## [0.1.0-alpha.3] - 2026-07-14
 
 ### Changed
@@ -44,7 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Payload vector runner against the kilden-sdk-spec mock capture server.
 - Constructor rejects secret (`sk_`) write keys.
 
-[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.3...HEAD
+[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.4...HEAD
+[0.1.0-alpha.4]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/kildenhq/kilden-sdk-expo/releases/tag/v0.1.0-alpha.1
