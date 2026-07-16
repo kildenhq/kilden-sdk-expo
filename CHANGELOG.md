@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-15
+
+First stable release. Graduates the `0.1.0-alpha` line out of prerelease so
+`npm install @kilden-io/expo` (the `latest` dist-tag) resolves to the current
+SDK — including `persistQueue` (added in alpha.2) as documented. No code
+changes since alpha.4.
+
 ## [0.1.0-alpha.4] - 2026-07-15
 
 ### Fixed
@@ -57,7 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Payload vector runner against the kilden-sdk-spec mock capture server.
 - Constructor rejects secret (`sk_`) write keys.
 
-[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.4...HEAD
+[Unreleased]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.4...v0.1.0
 [0.1.0-alpha.4]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/kildenhq/kilden-sdk-expo/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
