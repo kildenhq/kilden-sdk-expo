@@ -7,7 +7,12 @@ permissions:
   id-token: write
 jobs:
   npm:
-    runs-on: kilden-runners
+    # github-hosted, NOT the self-hosted kilden-runners pool: npm rejects
+    # `npm publish --provenance` from a self-hosted runner ("Only
+    # github-hosted runners are supported when publishing with provenance").
+    # ubuntu-latest is free for public repos and keeps the sigstore
+    # provenance we want on the package page.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
