@@ -93,6 +93,18 @@ export interface InitOptions {
    * event uuid. Default false.
    */
   persistQueue?: boolean;
+  /**
+   * Automatic $app_opened / $app_backgrounded lifecycle events driven by the
+   * AppState adapter (they never fire without one). Default true.
+   */
+  trackAppLifecycle?: boolean;
+  /**
+   * Capture uncaught errors as $exception via React Native's global
+   * ErrorUtils handler, with the message scrubbed (emails and long digit
+   * runs redacted, 1000-char cap) before it enters the queue. Opt-in;
+   * default false. The previous handler always still runs.
+   */
+  captureExceptions?: boolean;
   /** Initial identity token (JWT minted by your backend). */
   identityToken?: string;
   /** Called to (re)fetch the identity token: 60s before expiry and on 401. */

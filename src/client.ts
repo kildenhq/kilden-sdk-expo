@@ -1,5 +1,7 @@
 import { Batcher } from "./batcher.js";
 import { utf8ByteLength } from "./encoding.js";
+import { installExceptionHandler } from "./exception.js";
+import type { SessionRecordingConfig } from "./flags.js";
 import { FlagClient } from "./flags.js";
 import { TokenManager } from "./identity-token.js";
 import type { Logger } from "./log.js";
@@ -10,6 +12,7 @@ import {
   defaultRandomFill,
   defaultStorage,
 } from "./rn-defaults.js";
+import { K_SESSION, SessionManager } from "./session.js";
 import { K_ANON, K_DISTINCT, K_QUEUE, MemoryStorage } from "./storage.js";
 import { formatTimestamp, normalizeTimestamp } from "./timestamp.js";
 import { FetchTransport } from "./transport.js";
@@ -63,6 +66,7 @@ export class KildenClient {
   private readonly tokens: TokenManager;
   private readonly batcher: Batcher;
   private readonly flagClient: FlagClient;
+  private readonly sessions: SessionManager;
   private readonly hydration: Promise<void>;
 
   private anonId = "";
@@ -76,6 +80,8 @@ export class KildenClient {
   private closing: Promise<void> | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
   private unsubscribeAppState: (() => void) | null = null;
+  private uninstallExceptions: (() => void) | null = null;
+  private appStateStatus = "active";
 
   constructor(writeKey: string, options: InitOptions = {}) {
     if (typeof writeKey !== "string" || writeKey.length === 0) {
@@ -108,6 +114,7 @@ export class KildenClient {
 
     this.tokens = new TokenManager(options.getIdentityToken, this.log);
     if (options.identityToken) this.tokens.set(options.identityToken);
+    this.sessions = new SessionManager(this.storage, this.random, this.log);
 
     this.batcher = new Batcher({
       url: `${apiHost}/capture`,
@@ -151,14 +158,49 @@ export class KildenClient {
       (this.flushTimer as unknown as { unref?: () => void }).unref?.();
     }
 
+    // Lifecycle events need a lifecycle source: without an AppState adapter
+    // (plain Node, tests) nothing is emitted automatically.
+    const trackLifecycle = options.trackAppLifecycle !== false;
     const appState: AppStateAdapter | null =
       options.appState !== undefined ? options.appState : defaultAppState();
     if (appState) {
-      // No sendBeacon in React Native — flushing when the app leaves the
-      // foreground is the mobile replacement (docs/27 §8).
       this.unsubscribeAppState = appState.addListener((state) => {
-        if (state === "background" || state === "inactive") void this.flush();
+        const previous = this.appStateStatus;
+        this.appStateStatus = state;
+        if (state === "background" || state === "inactive") {
+          if (trackLifecycle && previous === "active") {
+            this.capture("$app_backgrounded", {}, undefined, {}, true);
+          }
+          // No sendBeacon in React Native — flushing when the app leaves the
+          // foreground is the mobile replacement (docs/27 §8).
+          void this.flush();
+        } else if (state === "active" && previous !== "active" && trackLifecycle) {
+          this.capture("$app_opened", {}, undefined, { $from_background: true }, true);
+        }
       });
+      if (trackLifecycle) {
+        this.capture("$app_opened", {}, undefined, { $from_background: false }, true);
+      }
+    }
+
+    if (options.captureExceptions === true) {
+      this.uninstallExceptions = installExceptionHandler((detail) => {
+        this.capture(
+          "$exception",
+          {},
+          undefined,
+          {
+            $exception_type: detail.type,
+            $exception_message: detail.message,
+            $exception_fatal: detail.fatal,
+            ...(detail.stack !== undefined ? { $exception_stack: detail.stack } : {}),
+          },
+          true,
+        );
+        // A fatal error usually means the process is about to die: get the
+        // queue on the wire while there is still a runtime to do it.
+        if (detail.fatal) void this.flush();
+      }, this.log);
     }
   }
 
@@ -283,6 +325,15 @@ export class KildenClient {
     return this.flagClient.isEnabled(flagKey, options);
   }
 
+  /**
+   * Project session-recording config from the last /decide answer, or null
+   * before one lands. Deliberate wiring for mobile replay (docs/todos
+   * expo-1 fase 2): nothing records today — this is the future kill-switch.
+   */
+  getSessionRecordingConfig(): SessionRecordingConfig | null {
+    return this.flagClient.getSessionRecordingConfig();
+  }
+
   /** Drains everything queued right now, including retries. Never rejects. */
   async flush(): Promise<void> {
     if (!this.enabled) return;
@@ -319,6 +370,7 @@ export class KildenClient {
     this.closing = (async () => {
       if (this.flushTimer !== null) clearInterval(this.flushTimer);
       this.unsubscribeAppState?.();
+      this.uninstallExceptions?.();
       this.tokens.stop();
       let timer: ReturnType<typeof setTimeout> | null = null;
       const deadline = new Promise<"deadline">((resolve) => {
@@ -357,11 +409,13 @@ export class KildenClient {
 
   private async hydrate(): Promise<void> {
     try {
-      const [anon, distinct, persisted] = await Promise.all([
+      const [anon, distinct, persisted, session] = await Promise.all([
         this.storage.getItem(K_ANON),
         this.storage.getItem(K_DISTINCT),
         this.persistQueue ? this.storage.getItem(K_QUEUE) : Promise.resolve(null),
+        this.storage.getItem(K_SESSION),
       ]);
+      this.sessions.hydrate(session);
       if (persisted) this.restoreQueue(persisted);
       if (anon) {
         this.anonId = anon;
@@ -472,7 +526,12 @@ export class KildenClient {
       uuid: stamped.uuid,
       event,
       distinct_id: this.distinctId,
-      properties: { ...context, ...systemProperties, ...userProperties },
+      properties: {
+        ...context,
+        $session_id: this.sessions.touch(),
+        ...systemProperties,
+        ...userProperties,
+      },
       timestamp: stamped.timestamp,
     });
     this.schedulePersist();

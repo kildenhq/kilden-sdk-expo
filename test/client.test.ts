@@ -87,6 +87,7 @@ describe("identity", () => {
     expect(events[0]?.distinct_id).toBe("user_42");
     expect(events[0]?.properties).toEqual({
       $anon_distinct_id: anonId,
+      $session_id: expect.any(String),
       $set: { plan: "pro" },
     });
     expect(events[1]?.distinct_id).toBe("user_42");
@@ -103,7 +104,10 @@ describe("identity", () => {
     const kinds = events.map((event) => event.event);
     expect(kinds.filter((kind) => kind === "$identify")).toHaveLength(1);
     const set = events.find((event) => event.event === "$set");
-    expect(set?.properties).toEqual({ $set: { plan: "pro" } });
+    expect(set?.properties).toEqual({
+      $session_id: expect.any(String),
+      $set: { plan: "pro" },
+    });
   });
 
   it("alias emits the frozen shape from the CURRENT identity and keeps state", async () => {
@@ -115,7 +119,10 @@ describe("identity", () => {
 
     const aliasEvent = batches.flat().find((event) => event.event === "$alias");
     expect(aliasEvent?.distinct_id).toBe("user_42");
-    expect(aliasEvent?.properties).toEqual({ $alias: "legacy_id_7" });
+    expect(aliasEvent?.properties).toEqual({
+      $alias: "legacy_id_7",
+      $session_id: expect.any(String),
+    });
     expect(await client.getDistinctId()).toBe("user_42");
   });
 
@@ -149,7 +156,11 @@ describe("events", () => {
     await client.flush();
     const event = batches.flat()[0];
     expect(event?.event).toBe("$screen");
-    expect(event?.properties).toEqual({ $screen_name: "Checkout", step: 2 });
+    expect(event?.properties).toEqual({
+      $screen_name: "Checkout",
+      $session_id: expect.any(String),
+      step: 2,
+    });
   });
 
   it("merges context properties, explicit properties win", async () => {
@@ -160,7 +171,11 @@ describe("events", () => {
     );
     client.track("themed", { $os: "custom" });
     await client.flush();
-    expect(batches.flat()[0]?.properties).toEqual({ $lib: "kilden-expo", $os: "custom" });
+    expect(batches.flat()[0]?.properties).toEqual({
+      $lib: "kilden-expo",
+      $os: "custom",
+      $session_id: expect.any(String),
+    });
   });
 
   it("drops invalid input without throwing and counts it", async () => {
@@ -339,6 +354,7 @@ describe("lifecycle", () => {
             };
           },
         },
+        trackAppLifecycle: false,
       },
       transport,
     );

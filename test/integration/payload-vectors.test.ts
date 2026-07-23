@@ -16,6 +16,8 @@
  *   guarantee is structural, not a validation path).
  * - The context provider is overridden to {} so events carry exactly the
  *   vector's properties ($lib etc. are asserted in unit tests instead).
+ * - Every event carries $session_id (mobile sessions, SPEC-mobile.md); the
+ *   runner asserts its shape, then removes it before the deep compare.
  */
 import { randomFillSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -144,12 +146,14 @@ describe("payload vectors (client adaptation)", () => {
       const actual = { ...(events[0] as unknown as Record<string, unknown>) };
       const expected = { ...(vector.expect_event as Record<string, unknown>) };
 
+      const properties = { ...(actual["properties"] as Record<string, unknown>) };
+      expect(properties["$session_id"], "$session_id shape").toMatch(UUID_V7_RE);
+      delete properties["$session_id"];
       if (method === "identify") {
-        const properties = { ...(actual["properties"] as Record<string, unknown>) };
         expect(properties["$anon_distinct_id"], "$anon_distinct_id shape").toMatch(ANON_ID_RE);
         delete properties["$anon_distinct_id"];
-        actual["properties"] = properties;
       }
+      actual["properties"] = properties;
 
       assertPlaceholders(actual, expected);
     });
