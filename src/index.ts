@@ -1,4 +1,5 @@
 import { KildenClient } from "./client.js";
+import type { SessionRecordingConfig } from "./flags.js";
 import type {
   AppStateAdapter,
   FlagOptions,
@@ -77,6 +78,10 @@ class KildenSingleton {
     return this.client.getFeatureFlag(flagKey, options);
   }
 
+  getSessionRecordingConfig(): SessionRecordingConfig | null {
+    return this.client?.getSessionRecordingConfig() ?? null;
+  }
+
   async isFeatureEnabled(flagKey: string, options?: FlagOptions): Promise<boolean> {
     if (!this.client) return options?.default === true;
     return this.client.isFeatureEnabled(flagKey, options);
@@ -120,3 +125,7 @@ export type {
 };
 export { MemoryStorage } from "./storage.js";
 export { FetchTransport } from "./transport.js";
+export { attachNavigationTracking } from "./navigation.js";
+export type { NavigationContainerLike, NavigationRouteLike } from "./navigation.js";
+export { SESSION_TIMEOUT_MS } from "./session.js";
+export type { SessionRecordingConfig };

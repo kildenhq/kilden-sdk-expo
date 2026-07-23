@@ -78,6 +78,43 @@ kilden.init("wk_your_public_key", {
 The SDK refreshes the token 60 seconds before it expires and once on a 401.
 Only mint tokens for users your backend has actually authenticated.
 
+## Sessions and screens
+
+Every event carries a `$session_id` (UUID v7) that rotates after 30 minutes
+of inactivity — the same session semantics as the web SDK, persisted in
+AsyncStorage so a quick app restart stays in the same session. Nothing to
+configure. Screen views are their own event:
+
+```ts
+kilden.screen("Checkout", { step: 2 }); // emits $screen with $screen_name
+```
+
+With react-navigation or expo-router, let the SDK report screens for you —
+pass your navigation container ref and every distinct route becomes a
+`$screen` (the **static** route name, e.g. `user/[id]`, never the resolved
+params):
+
+```ts
+import kilden, { attachNavigationTracking } from "@kilden-io/expo";
+
+// react-navigation: <NavigationContainer ref={navigationRef} onReady={...}>
+const detach = attachNavigationTracking(navigationRef, kilden);
+```
+
+The SDK also emits `$app_opened` (cold start and foreground return, with
+`$from_background`) and `$app_backgrounded` from `AppState`. Turn them off
+with `trackAppLifecycle: false`.
+
+## Exceptions (opt-in)
+
+`captureExceptions: true` wraps React Native's global `ErrorUtils` handler
+and reports uncaught errors as `$exception` (`$exception_type`,
+`$exception_message`, `$exception_fatal`, `$exception_stack`). The message
+and stack are scrubbed before they enter the queue — email addresses and
+long digit runs are redacted, and the message is capped at 1000 characters —
+because exception messages routinely drag PII along. The previously
+installed handler (dev red screen, crash reporters) always still runs.
+
 ## Feature flags
 
 Remote evaluation against `/decide`, cached 30 seconds per identity:
@@ -124,6 +161,8 @@ kilden.init("wk_your_public_key", {
   debug: false,             // verbose logging + $-prefix warnings
   enabled: true,            // false = full no-op (e.g. in development)
   persistQueue: false,      // true = queue survives app kills (see above)
+  trackAppLifecycle: true,  // $app_opened / $app_backgrounded from AppState
+  captureExceptions: false, // uncaught errors as $exception (scrubbed)
   identityToken: undefined, // initial JWT, see identity verification
   getIdentityToken: undefined,
   context: undefined,       // () => extra $ properties for every event

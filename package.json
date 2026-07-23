@@ -1,6 +1,6 @@
 {
   "name": "@kilden-io/expo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Kilden Expo / React Native SDK — client-side events, identity and feature flags.",
   "keywords": [
     "kilden",
