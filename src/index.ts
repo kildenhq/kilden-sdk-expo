@@ -57,6 +57,16 @@ class KildenSingleton {
     this.dispatch((client) => client.alias(aliasId));
   }
 
+  /** Pause mobile replay frame capture (SPEC-mobile §6.6); events keep flowing. */
+  pauseSessionRecording(): void {
+    this.dispatch((client) => client.pauseSessionRecording());
+  }
+
+  /** Resume mobile replay frame capture after pauseSessionRecording(). */
+  resumeSessionRecording(): void {
+    this.dispatch((client) => client.resumeSessionRecording());
+  }
+
   reset(): void {
     this.dispatch((client) => client.reset());
   }
@@ -129,3 +139,9 @@ export { attachNavigationTracking } from "./navigation.js";
 export type { NavigationContainerLike, NavigationRouteLike } from "./navigation.js";
 export { SESSION_TIMEOUT_MS } from "./session.js";
 export type { SessionRecordingConfig };
+export type { MobileRecordingConfig } from "./flags.js";
+export type { CapturedFrame } from "./types.js";
+// Seam for the React components (@kilden-io/expo/react): mask registration
+// and touch reporting without importing the client.
+export { maskRegistry, reportTouch } from "./replay/runtime.js";
+export type { MaskHandle, MaskRect } from "./replay/mask-registry.js";

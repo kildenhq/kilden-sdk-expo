@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-24
+
+### Added
+
+- **Mobile visual replay** (SPEC-mobile §6, `format_version: 1`): opt-in
+  screenshot-slideshow session recording — `sessionReplay: true` in `init()`
+  plus the project's mobile replay opt-in in the panel (served via
+  `/decide`'s `sessionRecording.mobile` block, polled every minute so a
+  panel toggle-off stops deployed recorders). Frames are captured with
+  `react-native-view-shot`'s `captureScreen` (optional peer; without it the
+  recorder stays off) at the window's dp size, JPEG q0.35, on navigation /
+  touch / foreground / a ≥10s heartbeat, deduplicated by hash, capped at
+  300 frames / 15 minutes per recording, and synthesized client-side into a
+  valid rrweb stream the existing web player consumes unchanged.
+- `<KildenMask>` (`@kilden-io/expo/react`): wraps sensitive views; their
+  rects are measured at every capture and blacked out on the frame BEFORE
+  upload — masked pixels never leave the device. Fail-closed: an
+  unmeasurable mask drops the whole frame. Needs the `jpeg-js` optional
+  peer; with masks on screen and no codec, frames are dropped, never
+  uploaded unmasked.
+- `<KildenReplayProvider>` (`@kilden-io/expo/react`): optional root wrapper
+  that reports taps (played back as click markers) and turns them into
+  on-change capture signals. Frames work without it.
+- `replayDenylist: string[]` init option and
+  `pauseSessionRecording()` / `resumeSessionRecording()`: screens and
+  moments that must never produce frames.
+- `sessionRecording.mobile` parsing (SPEC-mobile §5.1) on the config
+  exposed by `getSessionRecordingConfig()`.
+
+### Changed
+
+- `SessionRecordingConfig` gained the `mobile` field (`null` when the
+  server never sent the block).
+
 ## [0.1.0] - 2026-07-15
 
 First stable release. Graduates the `0.1.0-alpha` line out of prerelease so

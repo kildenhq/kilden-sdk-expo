@@ -1,7 +1,7 @@
 {
   "name": "@kilden-io/expo",
-  "version": "0.2.0",
-  "description": "Kilden Expo / React Native SDK — client-side events, identity and feature flags.",
+  "version": "0.3.0",
+  "description": "Kilden Expo / React Native SDK \u2014 client-side events, identity and feature flags.",
   "keywords": [
     "kilden",
     "analytics",
@@ -33,6 +33,17 @@
         "types": "./dist/index.d.cts",
         "default": "./dist/index.cjs"
       }
+    },
+    "./react": {
+      "react-native": "./dist/react.cjs",
+      "import": {
+        "types": "./dist/react.d.ts",
+        "default": "./dist/react.js"
+      },
+      "require": {
+        "types": "./dist/react.d.cts",
+        "default": "./dist/react.cjs"
+      }
     }
   },
   "files": [
@@ -47,7 +58,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean --target es2020",
+    "build": "tsup src/index.ts src/react.tsx --format esm,cjs --dts --clean --target es2020 --external react --external react-native",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --exclude 'test/integration/**'",
@@ -58,7 +69,10 @@
     "@react-native-async-storage/async-storage": ">=1.21.0",
     "expo": ">=50.0.0",
     "expo-crypto": ">=13.0.0",
-    "react-native": ">=0.73.0"
+    "react-native": ">=0.73.0",
+    "react": ">=18.0.0",
+    "react-native-view-shot": ">=4.0.0",
+    "jpeg-js": ">=0.4.0"
   },
   "peerDependenciesMeta": {
     "@react-native-async-storage/async-storage": {
@@ -69,10 +83,21 @@
     },
     "expo-crypto": {
       "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-native-view-shot": {
+      "optional": true
+    },
+    "jpeg-js": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/react": "^19.2.17",
+    "react": "^19.2.8",
     "tsup": "^8.3.5",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
