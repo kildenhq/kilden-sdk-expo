@@ -115,6 +115,54 @@ long digit runs are redacted, and the message is capped at 1000 characters —
 because exception messages routinely drag PII along. The previously
 installed handler (dev red screen, crash reporters) always still runs.
 
+## Session replay (opt-in, beta)
+
+Visual replay records your app as periodic screenshots and synthesizes an
+rrweb stream Kilden's player understands — watch real sessions next to the
+event timeline. **The pixels capture everything visible on screen**, so it
+takes a double opt-in: `sessionReplay: true` here AND enabling mobile
+replay for the project in the panel (which asks you to accept exactly that
+risk).
+
+```bash
+npx expo install react-native-view-shot   # capture (bundled in Expo Go)
+npm install jpeg-js                       # only if you use <KildenMask>
+```
+
+> Adding `react-native-view-shot` changes your native fingerprint: apps
+> using `runtimeVersion: { policy: "fingerprint" }` need a new native
+> build — this cannot ship over OTA.
+
+```ts
+kilden.init("wk_your_public_key", {
+  sessionReplay: true,
+  replayDenylist: ["settings/payment"], // screens that never produce frames
+});
+```
+
+Frames are captured on navigation, taps, foreground returns and a ≥10s
+heartbeat; identical frames are dropped, and a recording caps at 300 frames
+or 15 minutes. Sampling is per session against the rate you set in the
+panel. `pauseSessionRecording()` / `resumeSessionRecording()` gate capture
+manually.
+
+Masking is opt-in: wrap sensitive views and their rects are blacked out
+**before** the frame leaves the device (an unmeasurable mask drops the
+whole frame — never an unmasked upload). Wrap your root in the provider if
+you want taps as markers in the player:
+
+```tsx
+import { KildenMask, KildenReplayProvider } from "@kilden-io/expo/react";
+
+<KildenReplayProvider>
+  <App />
+</KildenReplayProvider>
+
+<KildenMask>
+  <BalanceCard />
+</KildenMask>
+```
+
 ## Feature flags
 
 Remote evaluation against `/decide`, cached 30 seconds per identity:

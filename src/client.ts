@@ -8,10 +8,16 @@ import type { Logger } from "./log.js";
 import { makeLogger, silentLogger } from "./log.js";
 import {
   defaultAppState,
+  defaultCaptureScreen,
   defaultContextProvider,
+  defaultJpegCodec,
+  defaultPlatform,
   defaultRandomFill,
   defaultStorage,
 } from "./rn-defaults.js";
+import { ReplayRecorder } from "./replay/recorder.js";
+import { redactDataUri } from "./replay/redact.js";
+import { maskRegistry, setActiveRecorder } from "./replay/runtime.js";
 import { K_SESSION, SessionManager } from "./session.js";
 import { K_ANON, K_DISTINCT, K_QUEUE, MemoryStorage } from "./storage.js";
 import { formatTimestamp, normalizeTimestamp } from "./timestamp.js";
@@ -27,12 +33,16 @@ import type {
   RandomFill,
   TrackOptions,
 } from "./types.js";
-import type { EventPayload } from "./types.js";
+import type { EventPayload, Transport } from "./types.js";
 import { isCanonicalUuid, newAnonymousId, uuidv7 } from "./uuid.js";
+import { VERSION } from "./version.js";
 
 const DEFAULT_API_HOST = "https://ingest.kilden.io";
 const DEFAULT_FLUSH_AT = 20;
 const DEFAULT_FLUSH_INTERVAL_MS = 5000;
+// The replay gate poll (SPEC-mobile §6.1): the panel toggling mobile replay
+// off must stop deployed recorders within one poll.
+const REPLAY_GATE_POLL_MS = 60_000;
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 const CLOSE_DEADLINE_MS = 10_000;
@@ -82,6 +92,9 @@ export class KildenClient {
   private unsubscribeAppState: (() => void) | null = null;
   private uninstallExceptions: (() => void) | null = null;
   private appStateStatus = "active";
+  private replay: ReplayRecorder | null = null;
+  private replayPollTimer: ReturnType<typeof setInterval> | null = null;
+  private currentScreen: string | null = null;
 
   constructor(writeKey: string, options: InitOptions = {}) {
     if (typeof writeKey !== "string" || writeKey.length === 0) {
@@ -171,11 +184,17 @@ export class KildenClient {
           if (trackLifecycle && previous === "active") {
             this.capture("$app_backgrounded", {}, undefined, {}, true);
           }
+          // Background stops the recording with its tail flushed (§6.3).
+          void this.replay?.onBackground();
           // No sendBeacon in React Native — flushing when the app leaves the
           // foreground is the mobile replacement (docs/27 §8).
           void this.flush();
-        } else if (state === "active" && previous !== "active" && trackLifecycle) {
-          this.capture("$app_opened", {}, undefined, { $from_background: true }, true);
+        } else if (state === "active" && previous !== "active") {
+          if (trackLifecycle) {
+            this.capture("$app_opened", {}, undefined, { $from_background: true }, true);
+          }
+          // Foreground starts a NEW recording of the (possibly same) session.
+          void this.evaluateReplayGate();
         }
       });
       if (trackLifecycle) {
@@ -197,11 +216,112 @@ export class KildenClient {
           },
           true,
         );
+        // The replay chunk in flight gets flagged (X-Kilden-Has-Error), so
+        // the panel can badge the recording.
+        this.replay?.noteError();
         // A fatal error usually means the process is about to die: get the
         // queue on the wire while there is still a runtime to do it.
         if (detail.fatal) void this.flush();
       }, this.log);
     }
+
+    if (options.sessionReplay === true) {
+      this.setupReplay(writeKey, options, transport, apiHost);
+    }
+  }
+
+  /**
+   * Mobile visual replay (SPEC-mobile §6). Local opt-in is only half the
+   * gate: recording starts when /decide also serves the project's mobile
+   * block (the panel opt-in behind the risk acceptance), and the gate is
+   * re-polled every minute so a panel toggle-off stops deployed recorders.
+   */
+  private setupReplay(
+    writeKey: string,
+    options: InitOptions,
+    transport: Transport,
+    apiHost: string,
+  ): void {
+    const captureScreen = options.captureScreen ?? defaultCaptureScreen(this.log);
+    if (!captureScreen) {
+      this.log.warn(
+        "sessionReplay: react-native-view-shot is not installed (optional peer); replay stays off",
+      );
+      return;
+    }
+    const platform = options.replayPlatform ?? defaultPlatform();
+    if (!platform) {
+      this.log.debug("sessionReplay: unsupported platform; replay stays off");
+      return;
+    }
+    const codec = defaultJpegCodec();
+    let warnedCodec = false;
+    this.replay = new ReplayRecorder({
+      storage: this.storage,
+      transport,
+      replayUrl: `${apiHost}/replay`,
+      writeKey,
+      platform,
+      sdkVersion: VERSION,
+      getDistinctId: () => this.getDistinctId(),
+      getSessionId: () => this.sessions.touch(),
+      captureScreen,
+      getRandomValues: this.random,
+      log: this.log,
+      replayDenylist: options.replayDenylist ?? [],
+      // Masking (§6.6): no masks → the frame passes untouched; masks with no
+      // codec or an unmeasurable rect → the frame is dropped (fail-closed).
+      redact: async (dataUri) => {
+        if (maskRegistry.isEmpty()) return dataUri;
+        if (!codec) {
+          if (!warnedCodec) {
+            warnedCodec = true;
+            this.log.warn(
+              "sessionReplay: <KildenMask> needs the jpeg-js optional peer; " +
+                "frames with masks on screen are DROPPED until it is installed",
+            );
+          }
+          return null;
+        }
+        const rects = await maskRegistry.measureAll();
+        if (rects === null) return null;
+        if (rects.length === 0) return dataUri;
+        return redactDataUri(codec, dataUri, rects);
+      },
+    });
+    setActiveRecorder(this.replay);
+    this.replayPollTimer = setInterval(() => {
+      void this.flagClient.poll().then(() => this.evaluateReplayGate());
+    }, REPLAY_GATE_POLL_MS);
+    (this.replayPollTimer as unknown as { unref?: () => void }).unref?.();
+    // First poll as soon as identity is hydrated.
+    void this.hydration.then(() =>
+      this.flagClient.poll().then(() => this.evaluateReplayGate()),
+    );
+  }
+
+  /** Start or stop the recorder to match the latest server gate. */
+  private async evaluateReplayGate(): Promise<void> {
+    const recorder = this.replay;
+    if (!recorder) return;
+    const mobile = this.flagClient.getSessionRecordingConfig()?.mobile ?? null;
+    if (recorder.isRecording()) {
+      if (!mobile?.enabled) await recorder.stop();
+      return;
+    }
+    if (mobile?.enabled && this.appStateStatus === "active" && !this.closed) {
+      await recorder.start(mobile, this.currentScreen);
+    }
+  }
+
+  /** Pause replay frame capture (SPEC-mobile §6.6); events keep flowing. */
+  pauseSessionRecording(): void {
+    this.replay?.pause();
+  }
+
+  /** Resume replay frame capture after pauseSessionRecording(). */
+  resumeSessionRecording(): void {
+    this.replay?.resume();
   }
 
   track(event: string, properties?: Properties, options?: TrackOptions): void {
@@ -239,6 +359,10 @@ export class KildenClient {
       const stamped = this.stamp(options);
       if (!stamped) return;
       this.enqueueOp(() => this.emit("$screen", props, stamped, { $screen_name: name }));
+      // Replay (§6.5): navigation is an on-change capture — Meta + fresh
+      // FullSnapshot of the new screen.
+      this.currentScreen = name;
+      void this.replay?.onScreenChange(name);
     });
   }
 
@@ -369,6 +493,12 @@ export class KildenClient {
     if (this.closing) return this.closing;
     this.closing = (async () => {
       if (this.flushTimer !== null) clearInterval(this.flushTimer);
+      if (this.replayPollTimer !== null) clearInterval(this.replayPollTimer);
+      if (this.replay) {
+        await this.replay.stop();
+        setActiveRecorder(null);
+        this.replay = null;
+      }
       this.unsubscribeAppState?.();
       this.uninstallExceptions?.();
       this.tokens.stop();

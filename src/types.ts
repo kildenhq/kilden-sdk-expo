@@ -71,6 +71,13 @@ export interface AppStateAdapter {
 
 export type RandomFill = (array: Uint8Array) => Uint8Array;
 
+/** One captured screen for mobile replay, already in dp space (SPEC-mobile §6.4). */
+export interface CapturedFrame {
+  dataUri: string;
+  width: number;
+  height: number;
+}
+
 export interface InitOptions {
   /** Base URL for the Kilden ingest endpoints. */
   apiHost?: string;
@@ -119,4 +126,18 @@ export interface InitOptions {
   getRandomValues?: RandomFill;
   /** App lifecycle override; defaults to React Native's AppState. */
   appState?: AppStateAdapter;
+  /**
+   * Mobile visual replay (SPEC-mobile §6): screenshot-slideshow recording of
+   * app sessions. Off by default; turning it on is only HALF the gate — the
+   * project must ALSO enable mobile replay in the panel (an explicit risk
+   * acceptance), served back via /decide. Requires the react-native-view-shot
+   * optional peer; without it the recorder stays off with a warning.
+   */
+  sessionReplay?: boolean;
+  /** Screen names that must never produce replay frames (SPEC-mobile §6.6). */
+  replayDenylist?: string[];
+  /** Screenshot adapter override; defaults to react-native-view-shot's captureScreen. */
+  captureScreen?: () => Promise<CapturedFrame | null>;
+  /** Platform override for replay metadata; defaults to react-native's Platform.OS. */
+  replayPlatform?: "ios" | "android";
 }
