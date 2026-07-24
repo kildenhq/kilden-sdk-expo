@@ -2,7 +2,6 @@ import type { MobileRecordingConfig } from "../flags.js";
 import type { Logger } from "../log.js";
 import type { CapturedFrame, KeyValueStorage, RandomFill, Transport } from "../types.js";
 import { uuidv7 } from "../uuid.js";
-import { djb2 } from "./hash.js";
 import { decideSampling } from "./sampling.js";
 import { RrwebSynthesizer } from "./synthesize.js";
 import type { RrwebEvent } from "./synthesize.js";
@@ -63,7 +62,10 @@ export class ReplayRecorder {
   private frames = 0;
   private startedAt = 0;
   private lastFrameAt = -Infinity;
-  private lastHash: number | null = null;
+  private lastDataUri: string | null = null;
+  // Bumped by discard(): pending flush retries check it and abandon (§6.3 —
+  // after opt-out no retained replay data may leave the device).
+  private epoch = 0;
   private currentScreen: string | null = null;
   private paused = false;
   private hasError = false;
@@ -103,7 +105,7 @@ export class ReplayRecorder {
     this.frames = 0;
     this.startedAt = this.now();
     this.lastFrameAt = -Infinity;
-    this.lastHash = null;
+    this.lastDataUri = null;
     this.currentScreen = screen;
     this.paused = false;
     this.hasError = false;
@@ -130,8 +132,13 @@ export class ReplayRecorder {
     this.synth = null;
   }
 
-  /** Stop and DROP the buffer without transmitting — the optOut path. */
+  /**
+   * Stop and DROP everything without transmitting — the optOut path (§6.3):
+   * the buffer is dropped and any chunk mid-retry is abandoned (the epoch
+   * bump makes pending backoff loops give up before their next attempt).
+   */
   discard(): void {
+    this.epoch++;
     if (!this.synth) return;
     this.shutdown();
     this.buffer = [];
@@ -144,13 +151,17 @@ export class ReplayRecorder {
     await this.stop();
   }
 
-  /** Navigation: capture the new screen as Meta + FullSnapshot. */
+  /**
+   * Navigation: capture the new screen as Meta + FullSnapshot. Never
+   * deduplicated (§6.4): two identical-looking screens still emit their
+   * navigation marker.
+   */
   async onScreenChange(screen: string): Promise<void> {
     this.currentScreen = screen;
     if (!this.synth || this.paused) return;
     if (!(await this.guardStillRecording())) return;
     if (this.denied()) return;
-    const frame = await this.captureFrame();
+    const frame = await this.captureFrame({ dedup: false });
     if (!frame || !this.synth) return;
     this.push(this.synth.screenChange(screen, frame, this.now()));
   }
@@ -224,7 +235,7 @@ export class ReplayRecorder {
   }
 
   /** Capture + mask + dedup; returns the data-URI or null (frame dropped). */
-  private async captureFrame(): Promise<string | null> {
+  private async captureFrame(options: { dedup: boolean } = { dedup: true }): Promise<string | null> {
     const captured = await this.deps.captureScreen();
     if (!captured) return null;
     let dataUri: string | null = captured.dataUri;
@@ -236,9 +247,11 @@ export class ReplayRecorder {
         return null;
       }
     }
-    const hash = djb2(dataUri);
-    if (hash === this.lastHash) return null;
-    this.lastHash = hash;
+    // Same-screen dedup only, by EXACT comparison (§6.4): a collision must
+    // never discard a distinct frame, and a screen change must never be
+    // deduplicated away (its Meta is the navigation marker).
+    if (options.dedup && dataUri === this.lastDataUri) return null;
+    this.lastDataUri = dataUri;
     this.lastFrameAt = this.now();
     this.frames++;
     if (this.synth) {
@@ -271,6 +284,9 @@ export class ReplayRecorder {
 
   private async flush(): Promise<void> {
     if (this.buffer.length === 0) return;
+    // Snapshot BEFORE any await: a discard() racing this flush must abandon
+    // it, so the epoch it compares against predates the discard.
+    const epoch = this.epoch;
     const events = this.buffer;
     const href = this.chunkHref;
     const hasError = this.hasError;
@@ -290,14 +306,27 @@ export class ReplayRecorder {
       lastEventAt: events[events.length - 1]!.timestamp,
       platform: this.deps.platform,
     };
-    const delivered = await sendChunk(
-      this.deps.transport,
-      this.deps.replayUrl,
-      meta,
-      JSON.stringify(events),
-    );
-    if (!delivered) {
-      this.deps.log.warn(`replay: chunk ${meta.chunkIndex} was not delivered`);
+    // The epoch guard runs between retry attempts: a discard() mid-backoff
+    // abandons the chunk instead of uploading after opt-out (§6.3).
+    try {
+      const delivered = await sendChunk(
+        this.deps.transport,
+        this.deps.replayUrl,
+        meta,
+        JSON.stringify(events),
+        async (ms) => {
+          await new Promise((resolve) => {
+            const timer = setTimeout(resolve, ms);
+            (timer as unknown as { unref?: () => void }).unref?.();
+          });
+          if (this.epoch !== epoch) throw new Error("abandoned");
+        },
+      );
+      if (!delivered) {
+        this.deps.log.warn(`replay: chunk ${meta.chunkIndex} was not delivered`);
+      }
+    } catch {
+      this.deps.log.debug(`replay: chunk ${meta.chunkIndex} abandoned by discard()`);
     }
   }
 }

@@ -112,7 +112,7 @@ describe("capture policy", () => {
     expect(sent[0]!.events.map((e) => e.type)).toEqual([4, 5, 2]);
   });
 
-  it("drops identical frames by hash", async () => {
+  it("drops identical same-screen frames (exact data-URI comparison)", async () => {
     let calls = 0;
     const { recorder, sent } = harness({
       captureScreen: async () => {
@@ -127,6 +127,23 @@ describe("capture policy", () => {
     expect(calls).toBe(2);
     // Only the initial FullSnapshot made it: the identical frame was dropped.
     expect(sent[0]!.events.map((e) => e.type)).toEqual([4, 5, 2]);
+  });
+
+  it("a screen change is NEVER deduplicated, even with identical pixels", async () => {
+    const { recorder, sent } = harness({
+      captureScreen: async () => ({
+        dataUri: "data:image/jpeg;base64,SAME",
+        width: 390,
+        height: 844,
+      }),
+    });
+    await recorder.start({ enabled: true, sampleRate: 1 }, "home");
+    vi.setSystemTime(1720000002000);
+    await recorder.onScreenChange("checkout");
+    await recorder.stop();
+    // Two identical white screens still produce the navigation Meta +
+    // FullSnapshot — dropping them would erase the navigation marker.
+    expect(sent[0]!.events.map((e) => e.type)).toEqual([4, 5, 2, 4, 2]);
   });
 
   it("the heartbeat captures at 10s intervals", async () => {
@@ -243,6 +260,25 @@ describe("chunking and lifecycle", () => {
     recorder.discard();
     expect(recorder.isRecording()).toBe(false);
     expect(sent).toHaveLength(0);
+  });
+
+  it("discard() abandons a chunk mid-retry (no upload after opt-out)", async () => {
+    let attempts = 0;
+    const { recorder } = harness({
+      transport: {
+        async send(): Promise<TransportResponse> {
+          attempts++;
+          return { status: 500, headers: {}, body: "" };
+        },
+      },
+    });
+    await recorder.start({ enabled: true, sampleRate: 1 }, "home");
+    const flushing = recorder.stop(); // first attempt fails → backoff starts
+    recorder.discard();
+    await vi.advanceTimersByTimeAsync(10_000); // would cover every backoff
+    await flushing;
+    // The retry loop stopped at the discard: no further attempts fired.
+    expect(attempts).toBe(1);
   });
 
   it("two recordings of one session carry distinct recording ids", async () => {
